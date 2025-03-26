@@ -1,0 +1,177 @@
+use std::collections::HashMap;
+use std::io::{self, Write, BufRead};
+
+fn main() {
+    let stdin = io::stdin();
+    let mut vars: HashMap<String, i64> = HashMap::new();
+
+    println!("('q' to exit)");
+
+    loop {
+        print!("> ");
+        io::stdout().flush().unwrap();
+
+        let mut input = String::new();
+        if stdin.lock().read_line(&mut input).is_err() {
+            break;
+        }
+        let input = input.trim();
+
+        if input.is_empty() {
+            continue;
+        }
+
+        if input == "q" {
+            break;
+        }
+
+        if input.starts_with("print ") {
+            let expr = &input[6..];
+            match calculate(expr, &vars) {
+                Ok(res) => println!("{}", res),
+                Err(e) => eprintln!("Hata: {}", e),
+            }
+        } else if input.contains('=') {
+            let parts: Vec<&str> = input.split('=').collect();
+            if parts.len() != 2 {
+                eprintln!("Hata: Invalid assigment operation!");
+                continue;
+            }
+            let variable = parts[0].trim();
+            let expr = parts[1].trim();
+            match calculate(expr, &vars) {
+                Ok(res) => { vars.insert(variable.into(), res); }
+                Err(e) => eprintln!("Hata: {}", e),
+            }
+        } else {
+            match calculate(input, &vars) {
+                Ok(res) => println!("{}", res),
+                Err(e) => eprintln!("Hata: {}", e),
+            }
+        }
+    }
+}
+
+fn calculate(expression: &str, vars: &HashMap<String, i64>) -> Result<i64, String> {
+    let token_stream = tokenize_expression(expression)?;
+    let mut evaluator = Evaluator::new(token_stream, vars);
+    let result = evaluator.evaluate()?;
+
+    if evaluator.index < evaluator.tokens.len() {
+        return Err("Unvalid token dedected".to_string());
+    }
+
+    Ok(result)
+}
+
+#[derive(Debug, Clone)]
+enum TokenType {
+    Integer(i64),
+    Variable(String),
+    Add,
+    Sub,
+    Mul,
+    Div,
+    OpenParen,
+    CloseParen,
+}
+
+fn tokenize_expression(expr: &str) -> Result<Vec<TokenType>, String> {
+    let chars: Vec<char> = expr.chars().collect();
+    let mut tokens = Vec::new();
+    let mut pos = 0;
+
+    while pos < chars.len() {
+        match chars[pos] {
+            ' ' | '\t' => pos += 1,
+            '0'..='9' => {
+                let start = pos;
+                while pos < chars.len() && chars[pos].is_ascii_digit() { pos += 1; }
+                let num = chars[start..pos].iter().collect::<String>().parse::<i64>().map_err(|_| "number could not read")?;
+                tokens.push(TokenType::Integer(num));
+            }
+            '+' => { tokens.push(TokenType::Add); pos += 1; }
+            '-' => { tokens.push(TokenType::Sub); pos += 1; }
+            '*' => { tokens.push(TokenType::Mul); pos += 1; }
+            '/' => { tokens.push(TokenType::Div); pos += 1; }
+            '(' => { tokens.push(TokenType::OpenParen); pos += 1; }
+            ')' => { tokens.push(TokenType::CloseParen); pos += 1; }
+            'a'..='z' | 'A'..='Z' => {
+                let start = pos;
+                while pos < chars.len() && (chars[pos].is_alphanumeric() || chars[pos] == '_') { pos += 1; }
+                let var = chars[start..pos].iter().collect::<String>();
+                tokens.push(TokenType::Variable(var));
+            }
+            c => return Err(format!("unvalid Char: {}", c)),
+        }
+    }
+
+    Ok(tokens)
+}
+
+struct Evaluator<'a> {
+    tokens: Vec<TokenType>,
+    index: usize,
+    vars: &'a HashMap<String, i64>,
+}
+
+impl<'a> Evaluator<'a> {
+    fn new(tokens: Vec<TokenType>, vars: &'a HashMap<String, i64>) -> Self {
+        Evaluator { tokens, index: 0, vars }
+    }
+
+    fn evaluate(&mut self) -> Result<i64, String> {
+        self.expr()
+    }
+
+    fn expr(&mut self) -> Result<i64, String> {
+        let mut val = self.term()?;
+
+        while self.index < self.tokens.len() {
+            match self.tokens[self.index] {
+                TokenType::Add => { self.index += 1; val += self.term()?; }
+                TokenType::Sub => { self.index += 1; val -= self.term()?; }
+                _ => break,
+            }
+        }
+
+        Ok(val)
+    }
+
+    fn term(&mut self) -> Result<i64, String> {
+        let mut val = self.factor()?;
+
+        while self.index < self.tokens.len() {
+            match self.tokens[self.index] {
+                TokenType::Mul => { self.index += 1; val *= self.factor()?; }
+                TokenType::Div => {
+                    self.index += 1;
+                    let divisor = self.factor()?;
+                    if divisor == 0 { return Err("division by 0 exeption".into()); }
+                    val /= divisor;
+                }
+                _ => break,
+            }
+        }
+
+        Ok(val)
+    }
+
+    fn factor(&mut self) -> Result<i64, String> {
+        match self.tokens.get(self.index) {
+            Some(TokenType::Integer(n)) => { self.index += 1; Ok(*n) }
+            Some(TokenType::Variable(v)) => {
+                self.index += 1;
+                self.vars.get(v).copied().ok_or_else(|| format!("undefind variable error: {}", v))
+            }
+            Some(TokenType::OpenParen) => {
+                self.index += 1;
+                let val = self.expr()?;
+                if matches!(self.tokens.get(self.index), Some(TokenType::CloseParen)) {
+                    self.index += 1; Ok(val)
+                } else { Err("')' beklexeptedeniyordu".into()) }
+            }
+            _ => Err("Unexpeted end string exeption".into()),
+        }
+    }
+}

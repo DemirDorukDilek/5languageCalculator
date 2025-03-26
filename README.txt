@@ -1,0 +1,1 @@
+her dilin readme si kendi klasörünün içindedir
